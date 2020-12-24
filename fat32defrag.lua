@@ -529,11 +529,18 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
     if pair[1] <= origin_cluster and origin_cluster <= pair[2] then
       origin_cluster_found_in_extents = true
       -- break pair, adding new extent in the middle (may or may not fragment):
-      if pair[1] < origin_cluster then add_to_new_extents(pair[1], origin_cluster - 1) end
+      if pair[1] < origin_cluster then
+        add_to_new_extents(pair[1], origin_cluster - 1)
+        previous_cluster = origin_cluster - 1
+      elseif i > 1 then
+        previous_cluster = dirent.extents[i-1][2]
+      end
       add_to_new_extents(destination_cluster, destination_cluster)
-      if origin_cluster < pair[2] then add_to_new_extents(origin_cluster + 1, pair[2]) end
-    else
-
+      if origin_cluster < pair[2] then
+        add_to_new_extents(origin_cluster + 1, pair[2])
+      end
+    else -- out of range:
+      add_to_new_extents(pair[1], pair[2])
     end
   end
 
@@ -762,7 +769,7 @@ if arg[2] == 'defragment' then
     print 'Press enter to defragment (or ^C to cancel).'
     io.read()
   end
-  error "it's still incomplete"
+
   fs:defragment()
   fs.fd:close()
 end
