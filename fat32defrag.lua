@@ -589,7 +589,22 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
         math.floor(destination_cluster / 0x1000000))))
     end
     if dirent.dir then
-      -- TODO: if we are moving a directory, update "." reference and all children's ".." references
+      -- if we are moving a directory, update "." reference and all children's ".." references
+      self:traverse_dir_dirent_direntries(dirent, function(callback_data)
+        if callback_data.first_byte == 0x2e then
+          if callback_data.second_byte == 32 then
+            -- we have found the '.' entry, let's update it:
+            self:update_dirent_pointer(
+              callback_data.cluster_number,
+              callback_data.byte_offset_into_cluster,
+              origin_cluster,
+              destination_cluster)
+          end
+        elseif callback_data.is_directory then
+          -- Note: this is an "elseif" to avoid an infinite loop traversing '.' or '..'
+          -- TODO: Now update the ".." of any subdirectory.
+        end
+      end)
     end
   end
 
@@ -599,6 +614,53 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
     self:set_fat_entry(previous_cluster, destination_cluster)
   end
   self:set_fat_entry(destination_cluster, origin_next_cluster)
+end
+
+
+--- Traverses a directory calling callback for each child.
+-- callback is called with an object containing:
+--   * cluster_number: uint32_t, the cluster cluster where the child dirent is located
+--   * byte_offset_into_cluster: uint32_t, the position of the child dirent from the cluster
+--   * first_byte: uint8_t, first byte of the child dirent
+--   * second_byte: uint8_t, second byte of the child dirent
+--   * is_directory: boolean, if the child dirent is a directory
+--   * first_cluster: uint32_t, initial cluster where the dirent points to
+--
+function FileSystem:traverse_dir_dirent_direntries(dirent, callback)
+  assert(dirent.dir, 'Dirent must be a dir dirent to be traversable')
+
+  local cluster_size = 512 * self.logical_sectors_per_cluster
+  local callback_data = {}
+  for _, pair in ipairs(dirent.extents) do
+    for cluster_number = pair[1], pair[2] do
+      callback_data.cluster_number = cluster_number
+      self.fd:seek('set', self:cluster_offset(cluster_number))
+      local cluster_data = self.fd:read(cluster_size)
+
+      for i = 0, cluster_size - 1, 32 do
+        callback_data.byte_offset_into_cluster = i
+        callback_data.first_byte = cluster_data:byte(i + 1)
+        callback_data.second_byte = cluster_data:byte(i + 2)
+        local attributes = cluster_data:byte(i + 0x0b + 1)
+        local is_volume = attributes % 0x10 >= 0x08
+        callback_data.is_directory = attributes % 0x20 >= 0x10
+
+        local lo, hi = cluster_data:byte(i + 0x14 + 1, i + 0x14 + 2) -- upper word
+        callback_data.first_cluster = 256 * hi + lo
+        lo, hi = cluster_data:byte(i + 0x01a + 1, i + 0x1a + 2) -- lower word
+        callback_data.first_cluster = 65536 * callback_data.first_cluster + 256 * hi + lo
+
+        if callback_data.first_byte == 0 then return end -- last direntry
+
+        if not is_volume and callback_data.first_byte ~= 0xe5 then
+          -- not is a volume, and not is deleted, then call the callback
+          if callback(callback_data) == 'break' then
+            return
+          end
+        end
+      end
+    end
+  end
 end
 
 
