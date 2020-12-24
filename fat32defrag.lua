@@ -1,6 +1,6 @@
 #!/usr/bin/env luajit
 
--- luaposix is recommended, as it allows safe interruptions: 
+-- luaposix is recommended, as it allows safe interruptions:
 local signal_ok, signal = pcall(require, 'posix.signal')
 
 local FileSystem = {
@@ -31,12 +31,14 @@ local FileSystem = {
 }
 FileSystem.__index = FileSystem
 
+
 local FAT_DATA_MOD = 0x10000000  -- so that we can ignore the upper 4 bits
 local FAT_UNUSED_CLUSTER = 0
 local FAT_RESERVED_CLUSTER = 1  -- it can be reserved when in the middle of a transaction.
 local FAT_SPECIAL_RANGE = 0xFFFFFF0  -- fat entries with this value or higher are special
 local FAT_BAD_CLUSTER = 0xFFFFFF7  -- pointing to a cluster with bad blocks (IO errors)
 local FAT_END_OF_CHAIN = 0xFFFFFF8  -- fat entries with this value or higher mark the Last Cluster of the File.
+
 
 --[[
 Dirent:
@@ -57,6 +59,7 @@ local function format_unit(bytes)
   return ('%g %s'):format(value, units[unit_index])
 end
 
+
 local function format_extents(list)
   local strings = {}
   for i, range in ipairs(list) do
@@ -64,6 +67,7 @@ local function format_extents(list)
   end
   return table.concat(strings, ', ')
 end
+
 
 function FileSystem:new(filename)
   local fd = assert(io.open(filename, 'r+b'))
@@ -82,6 +86,7 @@ function FileSystem:new(filename)
   return res
 end
 
+
 function FileSystem:check_bpb()
   -- reading first block to do some basic safety checks:
   --   * https://en.wikipedia.org/wiki/Design_of_the_FAT_file_system
@@ -90,7 +95,7 @@ function FileSystem:check_bpb()
   assert(bpb:byte() == 0xeb, 'This is probably not a FAT partition')
 
   print(('OEM Name:\t%q'):format(bpb:sub(0x003 + 1, 0x003 + 8)))
-  
+
   local lo, hi = bpb:byte(0x00b + 1, 0x00b + 2)
   local bytes_per_logical_sector = 256 * hi + lo
   assert(bytes_per_logical_sector == 512, 'We do not support other values.')
@@ -161,7 +166,7 @@ function FileSystem:check_bpb()
   print('Physical drive number:', bpb:byte(0x040 + 1))
   print(('Volume ID:\t%q'):format(bpb:sub(0x043 + 1, 0x043 + 4)))
   print(('Volume Label:\t%q'):format(bpb:sub(0x047 + 1, 0x047 + 8)))
-  
+
   local filesystem_type = bpb:sub(0x052 + 1, 0x052 + 8)
   assert(filesystem_type == 'FAT32   ', 'Only FAT32 is supported here, not ' .. filesystem_type)
 
@@ -183,6 +188,7 @@ function FileSystem:check_bpb()
   self.fsi_sector_number = fsi_sector_number
   self.number_of_clusters = number_of_clusters
 end
+
 
 function FileSystem:check_fsi()
   -- https://en.wikipedia.org/wiki/Design_of_the_FAT_file_system#FS_Information_Sector
@@ -210,6 +216,7 @@ function FileSystem:check_fsi()
   self.last_allocated_cluster = last_allocated_cluster
 end
 
+
 function FileSystem:flush_fsi()
   -- we only need to write the last_allocated_cluster, as the free space shouldn't change:
   assert(self.fd:seek('set', self.fsi_sector_number * 512 + 0x1ec))
@@ -219,6 +226,7 @@ function FileSystem:flush_fsi()
     math.floor(self.last_allocated_cluster / 0x10000) % 256,
     math.floor(self.last_allocated_cluster / 0x1000000))))
 end
+
 
 function FileSystem:check_fats()
   local fat_offset = 512 * self.reserved_logical_sectors
@@ -236,7 +244,7 @@ function FileSystem:check_fats()
     local lo, hi, hi2, hi3 = fat1:byte(4*i + 1, 4*i + 4)
     local fat_entry = lo + 256 * (hi + 256 * (hi2 + 256 * hi3))
     fat[i] = fat_entry
-    
+
     if 2 <= i and i < self.number_of_clusters then
       local fat_entry_data = fat_entry % FAT_DATA_MOD
       -- since we are already traversing the FAT, let's calculate the free space
@@ -265,7 +273,7 @@ function FileSystem:check_fats()
   print(('Free disk space:\t%d clusters (%s)'):format(
     free_clusters, format_unit(free_clusters * self.logical_sectors_per_cluster * 512)))
   print('Free disk space ranges:', format_extents(free_ranges))
-  
+
   assert(free_clusters >= 10, 'Cannot (reasonably) defragment without at least 10 free cluster.')
 
   self.fat = fat
@@ -273,9 +281,11 @@ function FileSystem:check_fats()
   self.free_clusters = free_clusters
 end
 
+
 function FileSystem:get_fat_entry(index)
   return self.fat[index] % FAT_DATA_MOD
 end
+
 
 function FileSystem:set_fat_entry(index, value)
   assert(0 <= index and index < FAT_DATA_MOD, 'Fat index out of range.')
@@ -284,6 +294,7 @@ function FileSystem:set_fat_entry(index, value)
   self.fat[index] = math.floor(self.fat[index] / FAT_DATA_MOD) * FAT_DATA_MOD + value % FAT_DATA_MOD
   self.dirty_fat_sectors[math.floor(index / 128)] = true
 end
+
 
 function FileSystem:flush_fat()
   local fat_entries = {}
@@ -307,6 +318,7 @@ function FileSystem:flush_fat()
   self.fd:flush()
   self.dirty_fat_sectors = {}
 end
+
 
 function FileSystem:check_files(dirent, filename)
   print(('Filename:\t%q\t\t\t(first cluster = %d, parent_index = %s)'):format(
@@ -382,6 +394,7 @@ function FileSystem:check_files(dirent, filename)
       filename or '/', #dirent.extents, format_extents(dirent.extents)))
   end
 end
+
 
 -- TODO: Test!
 function FileSystem:defragment()
@@ -480,6 +493,16 @@ function FileSystem:defragment()
   self:flush_fat()
 end
 
+
+--- This operation moves a single cluster of a single dirent, it should be atomic and the
+-- filesystem should be consistent in memory after it's completed (or at disk after the fat is
+-- flushed).
+--   In this function special care is taken to update the parent dirents when we are moving the
+-- first cluster of a dirent.
+--
+-- @param dirent Dirent object to update.
+-- @param origin_cluster cluster number that should be part of the referenced dirent.
+-- @param destination_cluster cluster number of a free cluster.
 function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
   -- Safety Checks:
   assert(origin_cluster ~= destination_cluster, 'Why would you move the file otherwise?')
@@ -487,7 +510,7 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
     'Destination_cluster must be free.')
   local origin_next_cluster = self:get_fat_entry(origin_cluster)
   assert(origin_next_cluster ~= FAT_UNUSED_CLUSTER, 'Wut? origin_cluster must not be free')
-  
+
   -- Calculate Extents (merging if it's the case)
   local new_extents = {}
   local function add_to_new_extents(from, to)
@@ -510,7 +533,7 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
       add_to_new_extents(destination_cluster, destination_cluster)
       if origin_cluster < pair[2] then add_to_new_extents(origin_cluster + 1, pair[2]) end
     else
-      
+
     end
   end
 
@@ -531,8 +554,31 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
 
   -- If it's the first cluster of the file:
   if not previous_cluster then
-    -- TODO: update parent's parent_index pointer
-    -- TODO: if we are moving a directory, update all children's ".." references
+    if dirent.parent then
+      -- Update parent's parent_index pointer
+      local dirents_per_cluster = 512 * self.logical_sectors_per_cluster / 32
+      local parent_index_cluster_offset = math.floor(dirent.parent_index / dirents_per_cluster)
+      local cluster_to_update
+      for i, pair in ipairs(dirent.parent.extents) do
+        if pair[1] + parent_index_cluster_offset <= pair[2] then
+          cluster_to_update = pair[1] + parent_index_cluster_offset
+          break
+        else
+          local clusters_in_pair = pair[2] - pair[1] + 1
+          parent_index_cluster_offset = parent_index_cluster_offset - clusters_in_pair
+        end
+      end
+      assert(cluster_to_update, 'Wut? have we lost the parent cluster pointing to this child???')
+
+      local parent_index_offset_into_cluster = dirent.parent_index % dirents_per_cluster * 32
+      self:update_dirent_pointer(cluster_to_update, parent_index_offset_into_cluster,
+        origin_cluster, destination_cluster)
+    else
+      -- TODO: if we are moving the root directory, update the cluster_number at the BPB
+    end
+    if dirent.dir then
+      -- TODO: if we are moving a directory, update "." reference and all children's ".." references
+    end
   end
 
   -- update the FAT:
@@ -542,6 +588,41 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
   end
   self:set_fat_entry(destination_cluster, origin_next_cluster)
 end
+
+
+function FileSystem:update_dirent_pointer(
+  cluster_number, byte_offset_into_cluster, old_first_cluster_pointer, new_first_cluster_pointer
+)
+  -- Let's first read the dirent as a basic sanity check:
+  local absolute_dirent_offset = self:cluster_offset(cluster_number) + byte_offset_into_cluster
+  assert(self.fd:seek('set', absolute_dirent_offset))
+  local dirent_string = assert(self.fd:read(32))
+  assert(#dirent_string == 32)
+
+  -- upper word of first cluster:
+  local lo, hi = dirent_string:byte(0x014 + 1, 0x14 + 2)
+  local first_cluster = 256 * hi + lo
+
+  -- lower word of first cluster:
+  lo, hi = dirent_string:byte(i + 0x01a + 1, i + 0x1a + 2)
+  first_cluster = 65536 * first_cluster + 256 * hi + lo
+
+  assert(first_cluster == old_first_cluster_pointer,
+    'Unexpected different old first cluster pointer, this is a serious internal error.')
+
+  -- update upper 2 bytes (LE)
+  assert(self.fd:seek('set', absolute_dirent_offset + 0x014))
+  assert(self.fd:write(string.char(
+    math.floor(new_first_cluster_pointer / 0x10000) % 256,
+    math.floor(new_first_cluster_pointer / 0x1000000))))
+
+  -- lower 2 bytes (LE)
+  assert(self.fd:seek('set', absolute_dirent_offset + 0x01a))
+  assert(self.fd:write(string.char(
+    new_first_cluster_pointer % 256,
+    math.floor(new_first_cluster_pointer / 0x100))))
+end
+
 
 function FileSystem:find_free_cluster()
   local cluster = self.last_allocated_cluster
@@ -561,6 +642,7 @@ function FileSystem:find_free_cluster()
   return cluster
 end
 
+
 function FileSystem:cluster_offset(cluster_number)
   return 512 * (
     self.reserved_logical_sectors
@@ -569,6 +651,7 @@ function FileSystem:cluster_offset(cluster_number)
     + (cluster_number - 2) * self.logical_sectors_per_cluster
   )
 end
+
 
 local fs = FileSystem:new(arg[1])
 if arg[2] == 'defragment' then
