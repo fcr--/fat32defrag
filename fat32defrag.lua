@@ -415,6 +415,7 @@ function FileSystem:defragment()
 
   local function defragment(cluster)
     io.write('Defragmenting cluster ', cluster, ': ')
+    io.flush()
     -- FIRST RULE: skip when not fragmented.
     if cluster > 2 then
       if self:get_fat_entry(cluster - 1) == cluster then
@@ -445,7 +446,7 @@ function FileSystem:defragment()
           cluster, next_cluster))
       end
 
-      if not next_cluster_of_previous_dirent and dirent_using_current_cluster[1][1] == cluster then
+      if not next_cluster_of_previous_dirent and dirent_using_current_cluster.extents[1][1] == cluster then
         -- the previous file was completed and we are starting a new file!
         print 'OK, previous file was completed. Continuing with next file.'
         return
@@ -466,7 +467,7 @@ function FileSystem:defragment()
     for next_initial_cluster = cluster + 1, self.number_of_clusters - 1 do
       local dirent = self.extent_borders_to_dirents[next_initial_cluster]
       -- we are only looking for initial segments:
-      if next_initial_cluster == dirent.extents[1][1] then
+      if dirent and next_initial_cluster == dirent.extents[1][1] then
         next_dirent = dirent
         break
       end
@@ -608,9 +609,9 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
               origin_cluster,
               destination_cluster)
           end
-        elseif callback_data.is_directory then
+        elseif callback_data.is_directory and callback_data.first_cluster ~= FAT_UNUSED_CLUSTER then
           -- Note: this is an "elseif" to avoid an infinite loop traversing '.' or '..'
-          -- Now update the ".." of any subdirectory.
+          -- Now update the ".." of any non-empty subdirectory.
           local inner_dirent = self.extent_borders_to_dirents[callback_data.first_cluster]
           assert(inner_dirent, 'A new inner directory appears, then I took an arrow to the knee!')
 
@@ -698,7 +699,7 @@ function FileSystem:update_dirent_pointer(
   local first_cluster = 256 * hi + lo
 
   -- lower word of first cluster:
-  lo, hi = dirent_string:byte(i + 0x01a + 1, i + 0x1a + 2)
+  lo, hi = dirent_string:byte(0x01a + 1,0x1a + 2)
   first_cluster = 65536 * first_cluster + 256 * hi + lo
 
   assert(first_cluster == old_first_cluster_pointer,
