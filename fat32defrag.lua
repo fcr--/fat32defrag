@@ -299,8 +299,8 @@ end
 function FileSystem:flush_fat()
   local fat_entries = {}
   for sector_offset in pairs(self.dirty_fat_sectors) do
-    for i = 0, 128 do
-      local fat_entry = self.fat[sector_offset * 128 + i]
+    for i = 0, 127 do
+      local fat_entry = self.fat[128 * sector_offset + i]
       local lo = fat_entry % 256
       local hi = math.floor(fat_entry / 0x100) % 256
       local hi2 = math.floor(fat_entry / 0x10000) % 256
@@ -427,6 +427,7 @@ function FileSystem:defragment()
     -- SECOND RULE: free the current cluster if needed
     local next_cluster = self:get_fat_entry(cluster)
     local previous_dirent, next_cluster_of_previous_dirent
+    local extra_message = ''
     if cluster > 2 then
       previous_dirent = assert(self.extent_borders_to_dirents[cluster - 1],
         'missing previous dirent in extent borders, something went really bad, sorry!')
@@ -452,13 +453,16 @@ function FileSystem:defragment()
         return
       end
       -- free the current cluster!
-      self:move_cluster(dirent_using_current_cluster, cluster, self:find_free_cluster())
+      local free_cluster = self:find_free_cluster()
+      self:move_cluster(dirent_using_current_cluster, cluster, free_cluster)
+      extra_message = (' (after freeing to %d)'):format(free_cluster)
     end
 
     -- THIRD RULE: bring back the next cluster of the previous file
     if next_cluster_of_previous_dirent then
       self:move_cluster(previous_dirent, next_cluster_of_previous_dirent, cluster)
-      print(('OK, subsequent cluster was brought from %d.'):format(next_cluster_of_previous_dirent))
+      print(('OK, subsequent cluster was brought from %d%s.'):format(
+        next_cluster_of_previous_dirent, extra_message))
       return
     end
 
@@ -474,8 +478,8 @@ function FileSystem:defragment()
     end
     if next_dirent then
       self:move_cluster(next_dirent, next_dirent.extents[1][1], cluster)
-      print(('OK, the initial cluster of a new file was brought from %d'):format(
-        next_dirent.extents[1][1]))
+      print(('OK, the initial cluster of a new file was brought from %d%s.'):format(
+        next_dirent.extents[1][1], extra_message))
       return
     end
 
