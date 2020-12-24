@@ -396,7 +396,6 @@ function FileSystem:check_files(dirent, filename)
 end
 
 
--- TODO: Test!
 function FileSystem:defragment()
   -- Iterate through all the clusters applying the following rules:
   -- 1. if the cluster is the continuation of the previous one, then CONTINUE WITH NEXT CLUSTER
@@ -429,7 +428,7 @@ function FileSystem:defragment()
     local previous_dirent, next_cluster_of_previous_dirent
     if cluster > 2 then
       previous_dirent = assert(self.extent_borders_to_dirents[cluster - 1],
-        'missing previous dirent in extent_borders, something went really bad, sorry!')
+        'missing previous dirent in extent borders, something went really bad, sorry!')
       assert(previous_dirent.extents[1][2] == cluster - 1,
         'expecting previous cluster on first extent border of the previous dirent')
       if previous_dirent.extents[2] then
@@ -541,6 +540,15 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
   assert(origin_cluster_found_in_extents, 'Wut? origin_cluster was not found in the file extents')
 
   -- ok, no going back!
+  -- this may not be the most efficient way to update extent_borders_to_dirents, but it works:
+  for _, pair in ipairs(dirent.extents) do
+    self.extent_borders_to_dirents[pair[1]] = nil
+    self.extent_borders_to_dirents[pair[2]] = nil
+  end
+  for _, pair in ipairs(new_extents) do
+    self.extent_borders_to_dirents[pair[1]] = dirent
+    self.extent_borders_to_dirents[pair[2]] = dirent
+  end
   dirent.extents = new_extents
 
   -- Copy data!
@@ -602,7 +610,19 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
           end
         elseif callback_data.is_directory then
           -- Note: this is an "elseif" to avoid an infinite loop traversing '.' or '..'
-          -- TODO: Now update the ".." of any subdirectory.
+          -- Now update the ".." of any subdirectory.
+          local inner_dirent = self.extent_borders_to_dirents[callback_data.first_cluster]
+          assert(inner_dirent, 'A new inner directory appears, then I took an arrow to the knee!')
+
+          self:traverse_dir_dirent_direntries(inner_dirent, function(inner_callback_data)
+            if inner_callback_data.first_byte == 0x2e and inner_callback_data.second_byte == 0x2e then
+              self:update_dirent_pointer(
+                inner_callback_data.cluster_number,
+                inner_callback_data.byte_offset_into_cluster,
+                origin_cluster,
+                destination_cluster)
+            end
+          end)
         end
       end)
     end
