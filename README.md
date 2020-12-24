@@ -1,7 +1,7 @@
 # fat32defrag
 FAT32 defragmenter written in pure lua!
 
-**Notice:** As the author, I do not trust this defragmenter myself, I wrote it since I couldn't find any fat32 compactor-defragmenter able to run from linux, and I needed it for my Playstation 2 USB hard drive.  I have backups of the games and saves I place into that hdd, and so should you.
+**Notice:** As the author, I do not trust this defragmenter myself.  I wrote it since I couldn't find any fat32 compactor-defragmenter able to run from linux, and I needed it for my Playstation 2 USB hard drive.  I have backups of the games and saves I place into that hdd, and so should you.
 
 * **THIS IS A BETA PROJECT, IT MAY OR MAY NOT WORK WITH YOUR FAT32 FILESYSTEM.**
 * **OTHER FILESYSTEM FORMATS ARE NOT SUPPORTED. PERIOD.**
@@ -25,6 +25,7 @@ The creation part (even though it's already included in the repo)
 dd if=/dev/zero of=image.orig bs=$((1024*1024)) count=50
 mkfs.vfat -F 32 image.orig
 mkdir -p image.mountdir
+cat  # this cat is to remind you that you shouldn't copy commands without reading them first, so ignore this line
 sudo mount image.orig image.mountdir/ -o loop
 cd image.mountdir
 sudo luajit -e 'for i=1,1700000,100 do for n in("abc"):gmatch"."do fd=assert(io.open(n,"a"))for j=i,i+99 do fd:write(n," ",i,"\n")end fd:close()end end'
