@@ -210,6 +210,16 @@ function FileSystem:check_fsi()
   self.last_allocated_cluster = last_allocated_cluster
 end
 
+function FileSystem:flush_fsi()
+  -- we only need to write the last_allocated_cluster, as the free space shouldn't change:
+  assert(self.fd:seek('set', self.fsi_sector_number * 512 + 0x1ec))
+  assert(self.fd:write(string.char(
+    self.last_allocated_cluster % 256,
+    math.floor(self.last_allocated_cluster / 0x100) % 256,
+    math.floor(self.last_allocated_cluster / 0x10000) % 256,
+    math.floor(self.last_allocated_cluster / 0x1000000))))
+end
+
 function FileSystem:check_fats()
   local fat_offset = 512 * self.reserved_logical_sectors
   assert(assert(self.fd:seek('set', fat_offset)) == fat_offset)
@@ -458,7 +468,7 @@ function FileSystem:defragment()
 
     -- FIFTH RULE: END
     print 'OK, defragmentation completed.'
-    -- TODO: Update last_allocated_cluster
+    self:flush_fsi()
     completed = true
     return
   end
