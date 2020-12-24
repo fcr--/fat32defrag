@@ -574,7 +574,19 @@ function FileSystem:move_cluster(dirent, origin_cluster, destination_cluster)
       self:update_dirent_pointer(cluster_to_update, parent_index_offset_into_cluster,
         origin_cluster, destination_cluster)
     else
-      -- TODO: if we are moving the root directory, update the cluster_number at the BPB
+      -- If we are moving the root directory, update the cluster_number at the BPB
+      assert(self.fd:seek('set', 0x02c))
+      local lo, hi, hi2, hi3 = assert(self.fd:read(4)):byte(0x02c + 1, 0x02c + 4)
+      local old_root_cluster_number = lo + 256 * (hi + 256 * (hi2 + 256 * hi3))
+      assert(old_root_cluster_number == origin_cluster,
+        'Inconsistency detected moving root directory, restore backup and debug.')
+
+      assert(self.fd:seek('set', 0x02c))
+      assert(self.fd:write(string.char(
+        destination_cluster % 256,
+        math.floor(destination_cluster / 0x100) % 256,
+        math.floor(destination_cluster / 0x10000) % 256,
+        math.floor(destination_cluster / 0x1000000))))
     end
     if dirent.dir then
       -- TODO: if we are moving a directory, update "." reference and all children's ".." references
