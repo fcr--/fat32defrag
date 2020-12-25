@@ -726,7 +726,7 @@ function FileSystem:update_dirent_pointer(
   assert(self.fd:seek('set', absolute_dirent_offset + 0x01a))
   assert(self.fd:write(string.char(
     new_first_cluster_pointer % 256,
-    math.floor(new_first_cluster_pointer / 0x100))))
+    math.floor(new_first_cluster_pointer / 0x100) % 256)))
 end
 
 
